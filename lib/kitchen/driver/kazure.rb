@@ -38,7 +38,7 @@ module Kitchen
 	driver.publish_settings_file
       end
       default_config :subscription do |driver|
-	driver.publish_settings_file
+	driver.subscription
       end
       
       required_config :publish_settings_file
@@ -50,13 +50,15 @@ module Kitchen
       
       def initialize(config)
 	debug("Initialize called. Config: " + config.inspect)
-	debug("For shits and giggles: #{Kazure.cloud_service}")
+	#debug("For shits and giggles: #{Kazure.cloud_service}")
 	settings = Nokogiri::XML(File.open(config[:publish_settings_file]))
 	subscriptions = settings.xpath("//Subscription")
 	sub_data = subscriptions.find{ |s| s.attributes["Name"].value == config[:subscription]}
 	cert = sub_data["ManagementCertificate"]
 	sub_id = sub_data["Id"]
 	
+	
+	FileUtils.mkdir_p(File.join(config[:kitchen_root], %w{.kitchen kitchen-azure}))
 	File.open(File.join(config[:kitchen_root], %w{.kitchen kitchen-azure}, "management_cert.pfx"),"w") do |f|
 	  f.write(cert)
 	end
@@ -66,7 +68,6 @@ module Kitchen
 	  c.subscription_id = sub_id
 	  c.management_endpoint = "https://management.core.windows.net"
 	end
-	#@cloud_service = "test-kitchen-" + SecureRandom.hex(6)
 	
 	super
       end
@@ -122,14 +123,17 @@ module Kitchen
 	vms.create_virtual_machine(vm_params, vm_options)
 	
 	## TODO: Logic to wait until VM is ReadyRole
-	while ((state = vms.list_virtual_machines.find{ |vm| vm.vm_name == instance.name }.status) != "ReadyRole")
-	  info("Waiting for VM to be ready. Current state: #{state}")
+	while ((vm_status = vms.list_virtual_machines.find{ |vm| vm.vm_name == instance.name }.status) != "ReadyRole")
+	  info("Waiting for VM to be ready. Current state: #{vm_status}")
 	  sleep 10
 	end
+	
+	wait_for_sshd(state[:hostname], config[:username], { :port => config[:port] })
 	
       end
 
       def destroy(state)
+	return unless state[:hostname]
 	vms = Azure::VirtualMachineManagementService.new
 	vms.delete_virtual_machine(state[:vm_name], state[:cloud_service])
 	FileUtils.rm_r(azure_temp_dir)
